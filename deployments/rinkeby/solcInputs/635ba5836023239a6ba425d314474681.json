@@ -1,0 +1,41 @@
+{
+  "language": "Solidity",
+  "sources": {
+    "contracts/FundMe.sol": {
+      "content": "// Get funds from users\n// Withdraw funds collected (Withdrawl can be done only by the contract owner)\n// Set a minimum funding value in USD\n\n/*\nStyle Guide - Order of layout\n    1)Pragma statements\n    2)Import statements\n    3)Interfaces\n    4)Libraries\n    5)Contracts\nOrder inside each contract,interface or library\n    1)Type declarations\n    2)State variables\n    3)Events\n    4)Modifiers\n    5)Functions\n*/\n\n//SPDX-License-Identifier: MIT\n\n//pragma\npragma solidity ^0.8.7;\n\n//imports\nimport \"./PriceConverter.sol\";\n\n//error codes\n// custom errors \nerror FundMe__NotOwner();\n\n/** @title A contract for crowd funding\n  * @author Ganesh Thoutam\n  * @notice This contract is to demo a sample funding contract\n  * @dev This implements s_priceFeeds as our library\n */\ncontract FundMe{\n\n    //Type declarations\n    using PriceConverter for uint256;\n\n    //State variables\n    uint256 public minUSD = 50 * 1e18;\n\n    address[] private s_funders;\n\n    mapping(address => uint256) private s_addressToAmountFunded;\n    //payable keyword makes the fund button \"red\"\n    //Just like Wallets holding funds, smart contracts can also hold funds (native blockchain token)\n    // By mentioning it as payable, we can access the value attribute \n    \n    address private immutable i_owner;\n    AggregatorV3Interface private s_priceFeed;\n\n    //Modifier\n    modifier onlyOwner{\n        // require(msg.sender == i_owner,\"Sender is not owner!!\");\n        if(msg.sender!=i_owner){\n            revert FundMe__NotOwner();\n        }\n        _; \n    }\n\n    /*\n    Functions Order:\n        1)Constructor\n        2)Receive\n        3)Fallback\n        4)External\n        5)Public\n        6)Internal\n        7)Private\n        8)View/Pure\n    */\n    constructor(address s_priceFeedAddress){\n        i_owner = msg.sender;\n        s_priceFeed = AggregatorV3Interface(s_priceFeedAddress);\n    }\n\n    //what happens if someone sends this contract ETH without calling fund function\n    //receive()\n    /*      Function keyword is not necessary for receive function.\n            A contract can have more than 1 receive functions\n            This function cannot have any arguments,cannot return anything and must have\n            external visibility and payable state mutability.\n            It can be virtual, can override and have modifiers.        \n    */      \n    //fallback()\n    /*\n        A contract can have only 1 fallback function\n        Declaration:\n        method-1) fallback() external [payable]\n        method-2) fallback(bytes calldata input) external[payable] returns(bytes memory output)\n        Without function keyword\n        Visibility of external\n        It can be virtual, can override and have modifiers.        \n    */\n\n    /** \n    * @notice This function funds this contract\n    * @dev This implements s_priceFeeds as our library\n    */\n    function fund() public payable{\n        //Want to be able to set a minimum fund amount in USD\n        require(msg.value.getConversionRate(s_priceFeed) >= minUSD, \"Min value must be 1 ETH\"); // 1e18 == 1*(10**18)  -  Money math is done in WEI\n        /*\n         if require is not met, it will revert with an error message\n         Reverting: Undo any action before and send remaining gas back\n        */\n        s_funders.push(msg.sender);\n        s_addressToAmountFunded[msg.sender] += msg.value;\n    }\n\n    function withdraw() public onlyOwner{\n        // require(msg.sender == i_owner,\"sender is not i_owner!!\");\n        for(uint256 funderIndex = 0; funderIndex<s_funders.length;funderIndex++){\n            address funder = s_funders[funderIndex];\n            s_addressToAmountFunded[funder] = 0;\n        }\n        //reset the s_funders array\n        s_funders = new address[](0);\n        //actually withdraw the funds - 3methods\n        //transfer - simplest one\n        //send\n        //call\n\n        //msg.sender type is address\n        //payable(msg.sender) type is payable address\n        // we can only work with payable type\n        payable(msg.sender).transfer(address(this).balance);\n\n        bool sendSuccess = payable(msg.sender).send(address(this).balance);\n        require(sendSuccess,\"send failed\");\n\n        (bool callSuccess,) = payable(msg.sender).call{value:address(this).balance}(\"\");\n        require(callSuccess,\"call failed\");\n    }   \n\n    function cheaperWithdraw() public payable onlyOwner{\n        address[] memory funders = s_funders;\n        //mapping can't be in memory\n        for(uint256 funderIndex =0;funderIndex<funders.length;funderIndex++)\n        {\n            address funder = funders[funderIndex];\n            s_addressToAmountFunded[funder] = 0;\n        }\n        s_funders = new address[](0);\n        \n        (bool success, ) = i_owner.call{value:address(this).balance}(\"\");\n        require(success);\n    }     \n\n    function getOwner() public view returns(address){\n        return i_owner;\n    }\n\n    function getFunder(uint256 index) public view returns(address){\n        return s_funders[index];\n    }\n\n    function getAddressToAmountFunded(address funder) public view returns(uint256){\n        return s_addressToAmountFunded[funder];\n    }\n    \n    function getPriceFeed() public view returns(AggregatorV3Interface){\n        return s_priceFeed;\n    }\n}"
+    },
+    "contracts/PriceConverter.sol": {
+      "content": "//SPDX-License-Identifier: MIT\n\npragma solidity ^0.8.7;\n\nimport \"@chainlink/contracts/src/v0.8/interfaces/AggregatorV3Interface.sol\";\n\nlibrary PriceConverter{\n    function getPrice(AggregatorV3Interface priceFeed) internal view returns(uint256){\n        //ABI\n        //Address 0x8A753747A1Fa494EC906cE90E9f37563A8AF630e\n        // AggregatorV3Interface priceFeed = AggregatorV3Interface(0x8A753747A1Fa494EC906cE90E9f37563A8AF630e);\n        // (uint80 roundID, uint price,uint startedAt,uint timeStamp,uint80 answeredInRound)=priceFeed.latestRoundData();\n        (, int256 price,,,)=priceFeed.latestRoundData();\n        //ETH interms of USD\n        //3000.00000000\n        return uint256(price*1e10);\n    }\n\n/*\n    function getVersion() internal view returns(uint256){\n        AggregatorV3Interface priceFeed = AggregatorV3Interface(0x8A753747A1Fa494EC906cE90E9f37563A8AF630e);\n        return priceFeed.version();\n    }\n*/\n    function getConversionRate(uint256 ethAmount,AggregatorV3Interface priceFeed) internal view returns(uint256){\n        uint256 ethPrice = getPrice(priceFeed);\n        uint256 ethAmountInUSD = (ethPrice*ethAmount)/1e18;\n        return ethAmountInUSD;\n    }\n}"
+    },
+    "@chainlink/contracts/src/v0.8/interfaces/AggregatorV3Interface.sol": {
+      "content": "// SPDX-License-Identifier: MIT\npragma solidity ^0.8.0;\n\ninterface AggregatorV3Interface {\n  function decimals() external view returns (uint8);\n\n  function description() external view returns (string memory);\n\n  function version() external view returns (uint256);\n\n  // getRoundData and latestRoundData should both raise \"No data present\"\n  // if they do not have data to report, instead of returning unset values\n  // which could be misinterpreted as actual reported values.\n  function getRoundData(uint80 _roundId)\n    external\n    view\n    returns (\n      uint80 roundId,\n      int256 answer,\n      uint256 startedAt,\n      uint256 updatedAt,\n      uint80 answeredInRound\n    );\n\n  function latestRoundData()\n    external\n    view\n    returns (\n      uint80 roundId,\n      int256 answer,\n      uint256 startedAt,\n      uint256 updatedAt,\n      uint80 answeredInRound\n    );\n}\n"
+    }
+  },
+  "settings": {
+    "optimizer": {
+      "enabled": false,
+      "runs": 200
+    },
+    "outputSelection": {
+      "*": {
+        "*": [
+          "abi",
+          "evm.bytecode",
+          "evm.deployedBytecode",
+          "evm.methodIdentifiers",
+          "metadata",
+          "devdoc",
+          "userdoc",
+          "storageLayout",
+          "evm.gasEstimates"
+        ],
+        "": [
+          "ast"
+        ]
+      }
+    },
+    "metadata": {
+      "useLiteralContent": true
+    }
+  }
+}
